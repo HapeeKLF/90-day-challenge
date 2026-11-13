@@ -1,5 +1,7 @@
 # 90-Day Challenge
 
+**Open the app:** https://hapeeklf.github.io/90-day-challenge/
+
 A personal habit tracker for 90 days: break bad habits, build good ones, work out every day, earn points, and buy yourself rewards.
 It works on your phone and computer, and you can add it to your phone's home screen like an app.
 
