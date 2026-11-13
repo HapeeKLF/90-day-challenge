@@ -1,39 +1,48 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="sage">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>90-Day Challenge</title>
   <meta name="description" content="Build good habits, break bad ones, train every day — 90 days.">
-  <meta name="theme-color" content="#0d1220">
+  <meta name="theme-color" content="#f2f0e9" id="themeColor">
+  <!-- Apply the saved color theme right away (no flash of the wrong colors) -->
+  <script>
+    try { var t = (JSON.parse(localStorage.getItem('ninetyday.v1') || '{}').theme) || 'sage'; document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
   <!-- Lets it work like an app when added to the home screen -->
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="90 Days">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <div class="brand">90-Day Challenge</div>
-      <div class="sub" id="topSub">Let's go</div>
-    </div>
-    <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
-  </header>
-
-  <main id="view" tabindex="-1"></main>
-
-  <nav class="tabbar" id="tabbar">
+  <nav class="nav" id="tabbar" aria-label="Main menu">
+    <div class="nav-brand"><img src="icons/icon-192.png" alt="">90-Day Challenge</div>
     <button data-tab="today" class="active"><span>✅</span>Today</button>
     <button data-tab="workout"><span>💪</span>Workout</button>
     <button data-tab="schedule"><span>🕒</span>Schedule</button>
     <button data-tab="rewards"><span>🎁</span>Rewards</button>
     <button data-tab="progress"><span>📈</span>Progress</button>
+    <div class="nav-foot">Your data is saved on this device only.</div>
   </nav>
+
+  <header class="topbar">
+    <div>
+      <div class="page-title" id="pageTitle">90-Day Challenge</div>
+      <div class="sub" id="topSub">Let's go</div>
+    </div>
+    <div class="top-actions">
+      <button class="icon-btn" id="themeBtn" aria-label="Change colors">🎨</button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙️</button>
+    </div>
+  </header>
+
+  <main id="view" tabindex="-1"></main>
 
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="sheet" id="sheet"></div>

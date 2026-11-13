@@ -40,6 +40,7 @@ function freshState() {
     reminders: false, fired: {},
     days: {},
     seenBadges: [],
+    theme: 'sage',
   };
 }
 let state;
@@ -53,6 +54,7 @@ let tab = 'today';
 let viewDate = today();
 let wkDow = null;      // weekday shown on Workout tab
 let setupStep = 0;
+let listFilter = 'all';  // 'all' | 'todo' on the Today checklist
 
 // ---------------- challenge helpers ----------------
 const dayIndex = ds => diffDays(state.startDate, ds);           // 0 = Day 1
@@ -144,22 +146,81 @@ function download(name, text, type) {
 }
 const habitById = id => state.habits.find(h => h.id === id);
 
+// ---------------- color themes ----------------
+const THEMES = [
+  { id: 'sage',    name: 'Sage & Cream',   desc: 'Light · calm green',  c: ['#f2f0e9', '#fbfaf6', '#4d7761', '#a9853f'] },
+  { id: 'mist',    name: 'Morning Mist',   desc: 'Light · soft blue',   c: ['#eef1f5', '#fbfcfe', '#557aa1', '#b0904a'] },
+  { id: 'sand',    name: 'Warm Sand',      desc: 'Light · earthy',      c: ['#f5efe6', '#fffaf3', '#a8714b', '#6b9a76'] },
+  { id: 'emerald', name: 'Emerald & Gold', desc: 'Dark · rich',         c: ['#0e1915', '#172822', '#cfae66', '#72bf93'] },
+  { id: 'ocean',   name: 'Deep Ocean',     desc: 'Dark · calm blue',    c: ['#0d1724', '#152336', '#86b8d8', '#6fc4ab'] },
+  { id: 'plum',    name: 'Plum & Rose',    desc: 'Dark · rich',         c: ['#19121f', '#241a2d', '#d9a8bc', '#e2c07f'] },
+];
+function applyTheme() {
+  const th = THEMES.find(x => x.id === state.theme) || THEMES[0];
+  document.documentElement.setAttribute('data-theme', th.id);
+  $('#themeColor')?.setAttribute('content', th.c[0]);
+}
+function openThemes() {
+  openSheet(`<h2>🎨 Choose your colors</h2>
+    <p class="muted small" style="margin-top:-6px">Tap a theme to try it. It changes right away and is remembered.</p>
+    <div class="themes">${THEMES.map(th => `<button class="swatch ${state.theme === th.id ? 'on' : ''}" data-act="setTheme" data-id="${th.id}">
+      <div class="preview" style="background:${th.c[0]}"><div style="background:${th.c[1]};margin:10px 0 10px 10px;border-radius:8px"></div>
+      <div style="display:flex;flex-direction:column;gap:6px;padding:12px"><i style="display:block;height:14px;border-radius:7px;background:${th.c[2]}"></i><i style="display:block;height:14px;width:60%;border-radius:7px;background:${th.c[3]}"></i></div></div>
+      <b>${th.name}</b><small>${th.desc}</small></button>`).join('')}</div>
+    <button class="btn primary block mt" data-act="close">Done</button>`);
+}
+const PAGE_TITLES = { today: 'Today', workout: 'Workout', schedule: 'Daily schedule', rewards: 'Rewards', progress: 'Progress' };
+
+// Average points per day over the last 7 finished days (used for "days until reward")
+function pointsPerDay(c) {
+  const vals = [];
+  for (let k = 1; k <= 7; k++) { const dc = c.days[addDays(today(), -k)]; if (dc) vals.push(dc.pts); }
+  if (!vals.length) return null;
+  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+function rewardStatus(c) {
+  const rs = state.rewards.slice().sort((a, b) => a.cost - b.cost);
+  return { rs, ready: rs.filter(r => r.cost <= c.avail), saving: rs.filter(r => r.cost > c.avail), rate: pointsPerDay(c) };
+}
+const daysTo = (need, rate) => !rate ? '' : `about ${Math.max(1, Math.ceil(need / rate))} day${Math.ceil(need / rate) <= 1 ? '' : 's'} at your pace`;
+function nextRewardCard(c, cls = '') {
+  const { rs, ready, saving, rate } = rewardStatus(c);
+  if (!rs.length) return `<div class="card ${cls}"><div class="card-head"><h3>🎁 Your rewards</h3></div>
+    <p class="muted small">Set a reward you really want — it makes every point count.</p>
+    <button class="btn primary block" data-act="goTab" data-tab="rewards">Add a reward</button></div>`;
+  const next = saving[0];
+  return `<div class="card next-reward ${cls}">
+    <div class="card-head"><h3>🎁 Rewards</h3><button class="link" data-act="goTab" data-tab="rewards">See all →</button></div>
+    ${ready.length ? `<div class="row" style="margin-bottom:12px"><span class="ico">${esc(ready[ready.length - 1].icon || '🎁')}</span>
+      <div class="grow"><b>You can claim ${ready.length === 1 ? 'a reward' : ready.length + ' rewards'}!</b><div class="muted small">${esc(ready[ready.length - 1].name)} · ${ready[ready.length - 1].cost.toLocaleString()} pts</div></div>
+      <button class="btn sm good" data-act="buy" data-id="${ready[ready.length - 1].id}">Claim</button></div>` : ''}
+    ${next ? `<div class="row"><span class="ico">${esc(next.icon || '🎁')}</span><div class="grow">
+      <div class="row between"><b>${esc(next.name)}</b><span class="small muted">${Math.max(0, c.avail).toLocaleString()} / ${next.cost.toLocaleString()}</span></div>
+      <div class="meter mt" style="margin-top:6px"><i style="width:${Math.min(100, Math.max(0, c.avail) / next.cost * 100)}%"></i></div>
+      <div class="small muted" style="margin-top:6px">${(next.cost - c.avail).toLocaleString()} pts to go${rate ? ' · ' + daysTo(next.cost - c.avail, rate) : ''}</div></div></div>`
+      : '<p class="small muted" style="margin:0">You can afford every reward on your list. Add a bigger one!</p>'}
+  </div>`;
+}
+
 // ============================================================
 // RENDER
 // ============================================================
 function render() {
+  applyTheme();
   document.body.classList.toggle('hidden-nav', !state.setupDone);
   if (!state.setupDone) { renderSetup(); return; }
   const c = compute();
   const t = c.tIdx;
+  $('#pageTitle').textContent = PAGE_TITLES[tab];
   $('#topSub').textContent = t < 0 ? `Starts ${nice(state.startDate)}` : t >= TOTAL ? 'Challenge complete 🏆' : `Day ${t + 1} of ${TOTAL} · ${nice(today())}`;
-  document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   ({ today: renderToday, workout: renderWorkout, schedule: renderSchedule, rewards: renderRewards, progress: renderProgress })[tab](c);
   checkBadges(c);
 }
 
 // ---------------- first-launch setup ----------------
 function renderSetup() {
+  $('#pageTitle').textContent = '90-Day Challenge';
   $('#topSub').textContent = 'Setup';
   if (setupStep === 0) {
     view.innerHTML = `
@@ -228,7 +289,7 @@ function renderToday(c) {
     const q = quoteFor(0);
     view.innerHTML = `
       <div class="card hero"><div class="daynum">${-t}<small> day${-t === 1 ? '' : 's'} to go</small></div>
-      <p style="position:relative;z-index:1">Your 90 days start on <b>${nice(state.startDate, { weekday: 'long', month: 'long', day: 'numeric' })}</b>. Get ready!</p></div>
+      <p>Your 90 days start on <b>${nice(state.startDate, { weekday: 'long', month: 'long', day: 'numeric' })}</b>. Get ready!</p></div>
       <div class="card quote"><p>“${esc(q[0])}”</p><div class="muted small">— ${esc(q[1])}</div></div>
       <button class="btn ghost block" data-act="settings">Change start date</button>`;
     return;
@@ -238,6 +299,7 @@ function renderToday(c) {
   const isToday = viewDate === today();
   const ch = challengeFor(i), q = quoteFor(i);
   const hs = state.habits;
+  const show = h => listFilter === 'all' || !d.h[h.id];
   const brk = hs.filter(h => h.type === 'break'), bld = hs.filter(h => h.type === 'build');
   const row = h => {
     const done = !!d.h[h.id], slipped = !!(d.slip && d.slip[h.id]);
@@ -245,65 +307,82 @@ function renderToday(c) {
     const m = mult(done ? streak : streak + 1);
     return `<div class="habit ${done ? 'done' : ''} ${slipped ? 'slipped' : ''}">
       <span class="ico">${esc(h.icon)}</span>
-      <div class="grow" data-act="toggle" data-id="${h.id}">
+      <div class="grow main" data-act="toggle" data-id="${h.id}">
         <div class="name">${esc(h.name)}</div>
         <div class="goal">${esc(h.goal || '')}</div>
         <div class="meta">
-          <span class="pill ${h.big ? 'hot' : ''}">${basePts(h)} pts${m > 1 ? ' × ' + m : ''}</span>
-          ${isToday ? `<span class="pill ${streak >= 7 ? 'gold' : streak ? 'good' : ''}">${h.type === 'break' ? '🧼 ' + streak + ' day' + (streak === 1 ? '' : 's') + ' clean' : '🔥 ' + streak + ' day streak'}</span>` : ''}
-          ${slipped ? '<span class="pill" style="color:var(--bad)">slipped — fresh start</span>' : ''}
+          <span class="pill ${h.big ? 'hot' : ''}">+${Math.round(basePts(h) * m)} pts</span>
+          ${isToday && streak ? `<span class="pill ${streak >= 7 ? 'gold' : 'good'}">${h.type === 'break' ? streak + ' day' + (streak === 1 ? '' : 's') + ' clean' : '🔥 ' + streak + ' in a row'}</span>` : ''}
+          ${slipped ? '<span class="pill" style="color:var(--bad)">fresh start</span>' : ''}
         </div>
       </div>
       <div class="habit-actions">
         <button class="check" data-act="toggle" data-id="${h.id}" aria-label="Mark ${esc(h.name)} done">✓</button>
-        ${h.timer && !done ? `<button class="timer-btn" data-act="timer">⏱</button>` : ''}
-        ${h.type === 'break' && !slipped ? `<button class="slip-btn" data-act="slip" data-id="${h.id}">I slipped</button>` : ''}
+        ${h.timer && !done ? `<button class="timer-btn" data-act="timer">⏱ Timer</button>` : ''}
+        ${h.type === 'break' && !slipped && !done ? `<button class="slip-btn" data-act="slip" data-id="${h.id}">I slipped</button>` : ''}
       </div></div>`;
+  };
+  const group = (label, list) => {
+    const vis = list.filter(show);
+    if (!list.length) return '';
+    const doneN = list.filter(h => d.h[h.id]).length;
+    return `<div class="group-label"><span>${label}</span><span>${doneN}/${list.length}</span></div>
+      ${vis.map(row).join('') || `<p class="small muted" style="margin:4px 4px 12px">All done here ✓</p>`}`;
   };
   const pct = hs.length ? Math.round(dc.done / hs.length * 100) : 0;
   const isSunday = dow(viewDate) === 0;
+  const week = isSunday ? weeklyCard(viewDate, c, true) : '';
   view.innerHTML = `
     ${!isToday ? `<div class="banner">You're editing <b>${nice(viewDate, { weekday: 'long', month: 'short', day: 'numeric' })}</b> (Day ${i + 1}). <button class="link" data-act="goToday">Back to today →</button></div>` : ''}
-    <div class="card hero">
-      <div class="row between" style="position:relative;z-index:1">
-        <div class="daynum">Day ${i + 1}<small> / ${TOTAL}</small></div>
-        <div class="row"><button class="icon-btn" style="background:rgba(255,255,255,.2);border:0" data-act="prevDay" aria-label="Previous day">‹</button>
-        <button class="icon-btn" style="background:rgba(255,255,255,.2);border:0" data-act="nextDay" aria-label="Next day" ${viewDate >= today() ? 'disabled' : ''}>›</button></div>
+    <div class="layout ${week ? 'has-week' : ''}">
+    <div class="card hero a-hero">
+      <div class="row between">
+        <div class="daynum">Day ${i + 1}<small> of ${TOTAL}</small></div>
+        <div class="row"><button class="icon-btn nav-day" data-act="prevDay" aria-label="Previous day">‹</button>
+        <button class="icon-btn nav-day" data-act="nextDay" aria-label="Next day" ${viewDate >= today() ? 'disabled style="opacity:.4"' : ''}>›</button></div>
       </div>
-      <div style="position:relative;z-index:1;margin-top:6px">${state.name ? `Let's go, ${esc(state.name)}! ` : ''}${pct}% of habits done ${isToday ? 'today' : 'that day'}</div>
+      <div style="margin-top:6px">${state.name ? `Keep going, ${esc(state.name)}. ` : ''}${dc.done} of ${hs.length} habits done ${isToday ? 'today' : 'that day'}.</div>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div class="stats">
         <div><b>${dc.pts}</b><span>${isToday ? "Today's" : 'Day'} points</span></div>
         <div><b>${c.avail.toLocaleString()}</b><span>Points to spend</span></div>
         <div><b>$${c.bank}</b><span>On the line</span></div>
+        <div class="wide-only"><b>${c.perfect}</b><span>Perfect days</span></div>
       </div>
     </div>
 
-    <div class="card quote"><p>“${esc(q[0])}”</p><div class="muted small">— ${esc(q[1])}</div></div>
+    ${week ? `<div class="a-week">${week}</div>` : ''}
 
-    ${isSunday ? weeklyCard(viewDate, c, true) : ''}
-
-    <div class="card challenge">
-      <div class="row between"><h3 style="margin:0">⚡ Bonus challenge</h3><span class="pill gold">Level ${ch.level} · ${ch.levelName}</span></div>
-      <p style="margin:10px 0">${esc(ch.text)}</p>
-      <button class="btn ${d.bonus ? 'good' : 'primary'} block" data-act="bonus">${d.bonus ? '✓ Done! +25 pts' : 'I did it! +25 pts'}</button>
+    <div class="card a-habits">
+      <div class="card-head"><h2>Checklist</h2>
+        <div class="filter"><button class="${listFilter === 'all' ? 'on' : ''}" data-act="filter" data-f="all">All</button><button class="${listFilter === 'todo' ? 'on' : ''}" data-act="filter" data-f="todo">To do</button></div></div>
+      <div class="list-progress"><i style="width:${pct}%"></i></div>
+      ${group('🚫 Stay clean', brk)}
+      ${group('✅ Build', bld)}
+      ${!hs.length ? '<p class="muted">No habits yet — add some in ⚙️ Settings.</p>' : ''}
     </div>
 
-    <div class="section-title"><h2>🚫 Stay clean</h2><small>tap to check off</small></div>
-    ${brk.map(row).join('') || '<p class="muted small">No "break" habits yet.</p>'}
-    <div class="section-title"><h2>✅ Build</h2><small>${dc.done}/${hs.length} done</small></div>
-    ${bld.map(row).join('') || '<p class="muted small">No "build" habits yet.</p>'}
+    <div class="card challenge a-challenge">
+      <div class="card-head"><h3>⚡ Today's challenge</h3><span class="pill gold">Level ${ch.level} · ${ch.levelName}</span></div>
+      <p style="margin:0 0 12px">${esc(ch.text)}</p>
+      <button class="btn ${d.bonus ? 'good' : 'primary'} block" data-act="bonus">${d.bonus ? '✓ Done — +25 pts' : 'I did it · +25 pts'}</button>
+    </div>
 
-    ${scoreCard(dc, isToday)}`;
+    ${nextRewardCard(c, 'a-reward')}
+
+    ${scoreCard(dc, isToday)}
+
+    <div class="card quote a-quote"><p>“${esc(q[0])}”</p><div class="muted small">— ${esc(q[1])}</div></div>
+    </div>`;
 }
 
 function scoreCard(dc, isToday) {
   const rows = dc.rows.map(r => r.bonus ? `<tr><td>⚡ Bonus challenge</td><td>+25</td></tr>`
     : r.perfect ? `<tr><td>🌟 Perfect day bonus</td><td>+50</td></tr>`
-    : `<tr><td>${esc(r.h.icon)} ${esc(r.h.name)}${r.m > 1 ? ` <span class="pill gold">${r.m}× streak</span>` : ''}</td><td>+${r.p}</td></tr>`).join('');
-  return `<div class="card mt"><div class="row between"><h3 style="margin:0">${isToday ? "Today's" : 'Day'} score</h3><span class="score-big">${dc.pts}</span></div>
-    ${rows ? `<table class="breakdown">${rows}</table>` : '<p class="muted small">Check off habits to start earning points.</p>'}
-    <p class="muted small" style="margin-bottom:0">Big habits 20 · others 10 · bonus 25 · perfect day +50. Streaks of 7+ days earn 1.5×, 30+ days earn 2×.</p></div>`;
+    : `<tr><td>${esc(r.h.icon)} ${esc(r.h.name)}${r.m > 1 ? ` <span class="pill gold">${r.m}×</span>` : ''}</td><td>+${r.p}</td></tr>`).join('');
+  return `<div class="card a-score"><div class="card-head"><h3>${isToday ? "Today's" : 'Day'} score</h3><span class="score-big">${dc.pts}</span></div>
+    ${rows ? `<details class="more"><summary>See points breakdown ▾</summary><table class="breakdown mt">${rows}</table></details>` : '<p class="muted small" style="margin:0">Check off habits to start earning points.</p>'}
+    <p class="muted small" style="margin-bottom:0">Big habits 20 · others 10 · challenge 25 · perfect day +50. 7-day streak = 1.5×, 30-day = 2×.</p></div>`;
 }
 
 // ---------------- weekly report ----------------
@@ -353,7 +432,7 @@ function renderWorkout(c) {
   if (wo) wo.log ||= {};
   const list = (plan[mode] || []).map(e => progressed(e, phase));
   const order = [1, 2, 3, 4, 5, 6, 0];
-  view.innerHTML = `
+  view.innerHTML = `<div class="grid2"><div>
     <div class="card">
       <div class="row between"><h2 style="margin:0">${esc(plan.icon || '💪')} ${esc(plan.name)}</h2><span class="pill hot">Level ${phase + 1} of 7</span></div>
       <p class="muted small" style="margin:6px 0 12px">Every 2 weeks the numbers go up automatically. ${mode === 'gym' ? 'Add 5 lbs when you hit every rep of every set.' : 'Move slower and with control to make it harder.'}</p>
@@ -375,7 +454,9 @@ function renderWorkout(c) {
       }).join('') || '<p class="muted">No exercises. Tap “Edit plan” to add some.</p>'}
     </div>
 
+    </div><div>
     ${isLogDay ? `<div class="card">
+      <h3>Log today's session</h3>
       <div class="row"><label class="field grow"><span>Total minutes</span><input type="number" inputmode="numeric" id="woMin" value="${esc(wo.minutes || '')}" placeholder="e.g. 45"></label></div>
       <label class="field"><span>Notes (how did it feel?)</span><input type="text" id="woNotes" value="${esc(wo.notes || '')}" placeholder="Felt strong, add weight next time"></label>
       <button class="btn ${wo.done ? 'good' : 'primary'} block" data-act="woDone">${wo.done ? '✓ Workout done! (tap to undo)' : 'Finish workout ✓'}</button>
@@ -384,7 +465,7 @@ function renderWorkout(c) {
     <button class="btn ghost block" data-act="editPlan">✏️ Edit ${DOW[wkDow]}'s plan</button>
 
     <div class="section-title"><h2>📈 Workout progress</h2><small>${c.workouts} done</small></div>
-    ${workoutProgress(c)}`;
+    ${workoutProgress(c)}</div></div>`;
 
   $('#modeSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.workoutMode = b.dataset.mode; save(); render(); });
   view.querySelectorAll('[data-log]').forEach(inp => inp.addEventListener('change', () => {
@@ -420,9 +501,9 @@ function workoutProgress(c) {
   return `<div class="card">
     <div class="row between"><div><b style="font-size:22px">${c.workouts}</b> <span class="muted small">workouts</span></div><div><b style="font-size:22px">${c.woMinutes}</b> <span class="muted small">minutes</span></div><div><b style="font-size:22px">${c.run.workout || 0}</b> <span class="muted small">day streak</span></div></div>
     <svg class="chart mt" viewBox="0 0 ${W} ${H + 14}" role="img" aria-label="Workout minutes per day">
-      <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a3d"/><stop offset="1" stop-color="#ff4f6d"/></linearGradient></defs>
-      <line x1="0" y1="${H}" x2="${W}" y2="${H}" stroke="#2c3654"/>${bars}
-      ${[0, 30, 60, 89].map(i => `<text x="${i === 89 ? W : (i * bw).toFixed(0)}" y="${H + 12}" fill="#98a2bd" font-size="9" text-anchor="${i === 89 ? 'end' : 'start'}">Day ${i + 1}</text>`).join('')}
+      <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--accent)"/><stop offset="1" style="stop-color:var(--good)"/></linearGradient></defs>
+      <line x1="0" y1="${H}" x2="${W}" y2="${H}" style="stroke:var(--line)"/>${bars}
+      ${[0, 30, 60, 89].map(i => `<text x="${i === 89 ? W : (i * bw).toFixed(0)}" y="${H + 12}" style="fill:var(--muted)" font-size="9" text-anchor="${i === 89 ? 'end' : 'start'}">Day ${i + 1}</text>`).join('')}
     </svg>
     <p class="muted small" style="margin:4px 0 0">Minutes per day across your 90 days.</p>
     ${liftRows ? `<h3 class="mt">Strength gains</h3><table class="breakdown">${liftRows}</table>` : '<p class="muted small">Log weights in the gym version to see your strength gains here.</p>'}
@@ -466,7 +547,7 @@ function renderSchedule(c) {
   view.innerHTML = `
     <div class="card"><h2 style="margin-bottom:4px">Your daily schedule</h2>
     <p class="muted small" style="margin:0">Check habits off as the day goes. Tap ✏️ to change times or tasks.</p></div>
-    ${state.schedule.map(b => {
+    <div class="grid2">${state.schedule.map(b => {
       const isNow = nowHM >= b.start && (b.end > b.start ? nowHM < b.end : nowHM < '23:59');
       const linked = (b.habits || []).map(habitById).filter(Boolean);
       return `<div class="card"><div class="block ${isNow ? 'now' : ''}">
@@ -475,7 +556,7 @@ function renderSchedule(c) {
         <ul class="items">${(b.items || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
         ${d ? linked.map(h => `<button class="mini-habit ${d.h[h.id] ? 'done' : ''}" data-act="toggle" data-id="${h.id}"><span class="check">✓</span><span>${esc(h.icon)} ${esc(h.name)}</span></button>`).join('') : ''}
       </div></div>`;
-    }).join('')}
+    }).join('')}</div>
     <button class="btn ghost block" data-act="editBlock" data-id="">＋ Add a time block</button>
 
     <div class="section-title"><h2>🔔 Reminders</h2></div>
@@ -543,39 +624,66 @@ setInterval(() => {
 }, 20000);
 
 // ---------------- REWARDS ----------------
+const REWARD_IDEAS = [
+  ['💆', 'Massage', 800], ['📚', 'New book', 250], ['🍣', 'Favorite restaurant', 600], ['🛌', 'Lazy morning off', 700],
+  ['🎮', 'Hobby / game time', 400], ['👕', 'New outfit', 1500], ['🎟️', 'Concert or game tickets', 2000], ['⌚', 'New watch', 3500],
+];
 function renderRewards(c) {
   const b = state.bank;
+  const { ready, saving, rate } = rewardStatus(c);
+  const rcard = r => {
+    const can = c.avail >= r.cost, need = r.cost - c.avail;
+    return `<div class="rcard ${can ? 'ready' : ''}">
+      <div class="row between"><span class="ico">${esc(r.icon || '🎁')}</span><button class="link small" data-act="editReward" data-id="${r.id}">Edit</button></div>
+      <div class="rname">${esc(r.name)}</div>
+      <div class="small muted">${r.cost.toLocaleString()} pts</div>
+      <div class="meter"><i style="width:${Math.min(100, Math.max(0, c.avail) / r.cost * 100)}%"></i></div>
+      <div class="small ${can ? '' : 'muted'}" style="${can ? 'color:var(--good);font-weight:700' : ''}">${can ? 'Ready to claim!' : `${need.toLocaleString()} to go${rate ? ' · ' + daysTo(need, rate) : ''}`}</div>
+      <div class="actions"><button class="btn sm ${can ? 'good' : ''} grow" data-act="buy" data-id="${r.id}" ${can ? '' : 'disabled'}>${can ? '🎉 Claim it' : 'Keep earning'}</button></div>
+    </div>`;
+  };
+  const owned = new Set(state.rewards.map(r => r.name.toLowerCase()));
   view.innerHTML = `
-    <div class="card hero"><div style="position:relative;z-index:1">
-      <div class="small" style="opacity:.9">Points available to spend</div>
+    <div class="card hero">
+      <div class="small" style="opacity:.9">Points you can spend</div>
       <div class="daynum">${c.avail.toLocaleString()}<small> pts</small></div>
-      <div class="small" style="opacity:.9;margin-top:6px">${c.earned.toLocaleString()} earned · ${c.spent.toLocaleString()} spent</div></div></div>
-
-    <div class="section-title"><h2>🎁 Rewards shop</h2><button class="link" data-act="editReward" data-id="">＋ Add</button></div>
-    <div class="card">
-      ${state.rewards.map(r => {
-        const can = c.avail >= r.cost;
-        return `<div class="reward"><span class="ico">${esc(r.icon || '🎁')}</span>
-          <div class="grow"><b>${esc(r.name)}</b><div class="muted small">${r.cost.toLocaleString()} pts${can ? '' : ` · ${(r.cost - c.avail).toLocaleString()} to go`}</div>
-          <div class="streak-bar"><i style="width:${Math.min(100, Math.max(0, c.avail) / r.cost * 100)}%"></i></div></div>
-          <div class="row"><button class="btn sm ghost" data-act="editReward" data-id="${r.id}">✏️</button>
-          <button class="btn sm ${can ? 'primary' : ''}" data-act="buy" data-id="${r.id}" ${can ? '' : 'disabled'}>Buy</button></div></div>`;
-      }).join('') || '<p class="muted">Add a reward you really want — that\'s your motivation.</p>'}
-    </div>
-
-    <div class="section-title"><h2>💰 Money on the line</h2><button class="link" data-act="editBank">Settings</button></div>
-    <div class="card center">
-      <div class="bank-amount ${c.bank >= b.stake ? 'up' : 'down'}">$${c.bank.toLocaleString()}</div>
-      <div class="muted small">of your $${b.stake.toLocaleString()} on the line</div>
-      <div class="row between mt" style="text-align:left">
-        <div><b style="color:var(--good)">+$${(c.perfect * b.earn).toLocaleString()}</b><div class="muted small">${c.perfect} perfect day${c.perfect === 1 ? '' : 's'} × $${b.earn}</div></div>
-        <div style="text-align:right"><b style="color:var(--bad)">−$${(c.missed * b.lose).toLocaleString()}</b><div class="muted small">${c.missed} missed day${c.missed === 1 ? '' : 's'} × $${b.lose}</div></div>
+      <div class="stats">
+        <div><b>${c.earned.toLocaleString()}</b><span>Earned</span></div>
+        <div><b>${c.spent.toLocaleString()}</b><span>Spent</span></div>
+        <div><b>${rate ?? '—'}</b><span>Pts / day lately</span></div>
       </div>
-      <p class="muted small" style="margin-bottom:0">Pretend money — nothing is ever charged. A “missed day” is a past day with less than half your habits done.</p>
     </div>
 
-    ${state.purchases.length ? `<div class="section-title"><h2>🧾 Rewards you've claimed</h2></div><div class="card">
-      ${state.purchases.slice().reverse().map(p => `<div class="row between" style="padding:6px 0;border-top:1px solid var(--line)"><span>${esc(p.icon || '🎁')} ${esc(p.name)}<div class="muted small">${nice(p.date)}</div></span><span class="row"><b>−${p.cost}</b><button class="btn sm ghost" data-act="refund" data-id="${p.id}" aria-label="Undo">↩︎</button></span></div>`).join('')}
+    ${ready.length ? `<div class="section-title"><h2>🎉 Ready to claim</h2><small>you earned these</small></div>
+      <div class="reward-grid">${ready.map(rcard).join('')}</div>` : ''}
+
+    <div class="section-title"><h2>🎯 Saving up for</h2><small>closest first</small></div>
+    ${saving.length ? `<div class="reward-grid">${saving.map(rcard).join('')}</div>` : '<div class="card muted small">Nothing to save up for — add a bigger reward below.</div>'}
+
+    <div class="grid2" style="margin-top:20px">
+      <div class="card">
+        <div class="card-head"><h3>＋ Add a reward</h3></div>
+        <div class="row"><input type="text" id="qaIcon" value="🎁" style="width:58px;text-align:center" aria-label="Icon">
+        <input type="text" id="qaName" placeholder="What do you want?" class="grow" aria-label="Reward name"></div>
+        <div class="row mt"><input type="number" id="qaCost" inputmode="numeric" placeholder="Cost in points" aria-label="Cost in points"><button class="btn primary" data-act="quickAdd">Add</button></div>
+        <p class="small muted">A strong day earns about 250–400 pts. Quick ideas:</p>
+        <div class="chips">${REWARD_IDEAS.filter(x => !owned.has(x[1].toLowerCase())).map((x, k) => `<button class="chip" data-act="addIdea" data-i="${REWARD_IDEAS.indexOf(x)}">${x[0]} ${esc(x[1])} · ${x[2]}</button>`).join('')}</div>
+      </div>
+
+      <div class="card center">
+        <div class="card-head"><h3>💰 Money on the line</h3><button class="link" data-act="editBank">Settings</button></div>
+        <div class="bank-amount ${c.bank >= b.stake ? 'up' : 'down'}">$${c.bank.toLocaleString()}</div>
+        <div class="muted small">of your $${b.stake.toLocaleString()} on the line</div>
+        <div class="row between mt" style="text-align:left">
+          <div><b style="color:var(--good)">+$${(c.perfect * b.earn).toLocaleString()}</b><div class="muted small">${c.perfect} perfect day${c.perfect === 1 ? '' : 's'} × $${b.earn}</div></div>
+          <div style="text-align:right"><b style="color:var(--bad)">−$${(c.missed * b.lose).toLocaleString()}</b><div class="muted small">${c.missed} missed day${c.missed === 1 ? '' : 's'} × $${b.lose}</div></div>
+        </div>
+        <p class="muted small" style="margin-bottom:0">Pretend money — nothing is ever charged. A missed day = under half your habits done.</p>
+      </div>
+    </div>
+
+    ${state.purchases.length ? `<div class="card"><div class="card-head"><h3>🧾 Rewards you've claimed</h3><span class="pill good">${state.purchases.length}</span></div>
+      ${state.purchases.slice().reverse().map(p => `<div class="row between" style="padding:8px 0;border-top:1px solid var(--line)"><span>${esc(p.icon || '🎁')} ${esc(p.name)}<div class="muted small">${nice(p.date)}</div></span><span class="row"><b>−${p.cost.toLocaleString()}</b><button class="btn sm ghost" data-act="refund" data-id="${p.id}" aria-label="Undo">Undo</button></span></div>`).join('')}
     </div>` : ''}`;
 }
 function rewardForm(id) {
@@ -617,25 +725,31 @@ function renderProgress(c) {
       </div>
     </div>
 
+    <div class="grid2"><div>
     <div class="section-title"><h2>🗓 Your 90 days</h2><small>tap a day to edit it</small></div>
     <div class="card"><div class="cal">${cells}</div>
       <div class="legend"><span><i style="background:var(--gold)"></i>Perfect</span><span><i style="background:rgba(52,211,153,.7)"></i>75%+</span><span><i style="background:rgba(52,211,153,.42)"></i>50%+</span><span><i style="background:rgba(52,211,153,.18)"></i>Started</span><span><i style="background:var(--bg2);border:1px solid var(--line)"></i>Not yet</span></div>
     </div>
 
+    </div><div>
     <div class="section-title"><h2>🏅 Badges</h2><small>${c.active} solid days</small></div>
     <div class="card"><div class="badges">${BADGES.map(b => `<div class="badge ${c.active >= b.n ? 'got' : ''}"><span class="em">${b.em}</span><b>${b.name}</b><small>${Math.min(c.active, b.n)}/${b.n} days</small></div>`).join('')}</div>
     <p class="muted small" style="margin-bottom:0">A “solid day” = at least half your habits done.</p></div>
 
     <div class="section-title"><h2>🔥 Streaks</h2><small>now · best</small></div>
     <div class="card">${state.habits.map(h => `<div class="streak-row"><span style="font-size:20px">${esc(h.icon)}</span>
-      <div class="grow"><div class="row between"><span class="small" style="font-weight:600">${esc(h.name)}</span><span class="small"><b>${c.run[h.id] || 0}</b> · <span class="muted">${c.best[h.id] || 0}</span></span></div>
+      <div class="grow"><div class="row between"><span class="small" style="font-weight:600">${esc(h.name)}</span><span class="small nums"><b>${c.run[h.id] || 0}</b> · <span class="muted">${c.best[h.id] || 0}</span></span></div>
       <div class="streak-bar"><i style="width:${Math.min(100, (c.run[h.id] || 0) / TOTAL * 100)}%"></i></div></div></div>`).join('')}</div>
 
+    </div></div>
+    <div class="grid2"><div>
     <div class="section-title"><h2>💪 Workouts</h2></div>
     ${workoutProgress(c)}
+    </div><div>
 
     <div class="section-title"><h2>📊 Weekly reports</h2><small>every Sunday</small></div>
-    ${sundays.length ? sundays.reverse().map(s => weeklyCard(s, c)).join('') : '<div class="card muted small">Your first weekly report appears on your first Sunday.</div>'}`;
+    ${sundays.length ? sundays.reverse().map(s => weeklyCard(s, c)).join('') : '<div class="card muted small">Your first weekly report appears on your first Sunday.</div>'}
+    </div></div>`;
 }
 function checkBadges(c) {
   const got = BADGES.filter(b => c.active >= b.n && !state.seenBadges.includes(b.n));
@@ -654,6 +768,7 @@ function openSettings() {
     <label class="field"><span>Your name</span><input type="text" id="stName" value="${esc(state.name)}"></label>
     <label class="field"><span>Start date of your 90 days</span><input type="date" id="stStart" value="${state.startDate}"></label>
     <button class="btn primary block" data-act="saveSettings">Save</button>
+    <button class="btn ghost block mt" data-act="themes">🎨 Change colors</button>
     <div class="section-title"><h2>Habits</h2></div>
     ${habitEditorList()}
     <div class="section-title"><h2>Backup</h2></div>
@@ -758,7 +873,7 @@ function toggleHabit(id) {
 }
 
 document.addEventListener('click', e => {
-  const tabBtn = e.target.closest('.tabbar button');
+  const tabBtn = e.target.closest('.nav button[data-tab]');
   if (tabBtn) { tab = tabBtn.dataset.tab; if (tab !== 'workout') wkDow = null; window.scrollTo(0, 0); render(); return; }
   const el = e.target.closest('[data-act]'); if (!el) return;
   const act = el.dataset.act, id = el.dataset.id;
@@ -766,6 +881,21 @@ document.addEventListener('click', e => {
   switch (act) {
     case 'close': closeSheet(); break;
     case 'settings': openSettings(); break;
+    case 'themes': openThemes(); break;
+    case 'setTheme': state.theme = id; save(); applyTheme(); openThemes(); render(); break;
+    case 'filter': listFilter = el.dataset.f; render(); break;
+    case 'goTab': tab = el.dataset.tab; wkDow = null; window.scrollTo(0, 0); render(); break;
+    case 'quickAdd': {
+      const name = val('#qaName'), cost = Number(val('#qaCost'));
+      if (!name || !cost) { toast('Add a name and a point cost'); return; }
+      state.rewards.push({ id: 'r' + uid(), icon: val('#qaIcon') || '🎁', name, cost: Math.max(1, cost) });
+      save(); render(); toast('Reward added 🎁'); break;
+    }
+    case 'addIdea': {
+      const x = REWARD_IDEAS[Number(el.dataset.i)];
+      state.rewards.push({ id: 'r' + uid(), icon: x[0], name: x[1], cost: x[2] });
+      save(); render(); toast(`${x[0]} ${x[1]} added — tap Edit to change the price`); break;
+    }
 
     // setup wizard
     case 'setupNext':
@@ -888,6 +1018,7 @@ document.addEventListener('click', e => {
   }
 });
 $('#settingsBtn').addEventListener('click', () => state.setupDone ? openSettings() : null);
+$('#themeBtn').addEventListener('click', openThemes);
 
 // Refresh at midnight / when coming back to the app so "today" is always right
 let lastDay = today();

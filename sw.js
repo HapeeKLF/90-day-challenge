@@ -1,6 +1,6 @@
 // Offline support: saves the app's files on the phone so it opens without internet.
 // Bump VERSION whenever you change the app so phones pick up the new version.
-const VERSION = '90day-v1';
+const VERSION = '90day-v2';
 const FILES = ['./', 'index.html', 'css/styles.css', 'js/data.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
